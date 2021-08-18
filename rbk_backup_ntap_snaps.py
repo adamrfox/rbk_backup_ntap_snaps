@@ -11,6 +11,8 @@ sys.path.append('./NetApp')
 from NaServer import *
 import ssl
 import re
+import urllib3
+urllib3.disable_warnings()
 
 def usage():
     print("Usage goes here!")
@@ -66,6 +68,25 @@ def get_index_list(s, snap_list):
                 return([])
     return(index_list)
 
+def create_fs_template(rubrik, ntap_host, share):
+    if share.startswith('/'):
+        payload = [{"includes": ["x"], "excludes": [".snapshot"], "name": ntap_host + '_' + share[1:], "shareType": "NFS",
+                    "allowBackupHiddenFoldersInNetworkMounts": True}]
+    else:
+        payload = [{"includes": ["x"], "excludes": ["~snapshot"], "name": ntap_host + '_' + share, "shareType": "SMB"}]
+    fst_data = rubrik.post('internal', '/fileset_template/bulk', payload, timeout=timeout)
+    if fst_data['total'] == 0:
+        sys.stderr.write("Error Creating Fileset Template: " + ntap_host + '_' + share)
+        exit(1)
+    return(str(fst_data['data'][0]['id']))
+
+def get_fsid(id, data):
+    if data['total'] == 0:
+        return("")
+    for fs in data['data']:
+        if fs['templateId'] == id:
+            return(fs['id'])
+    return("")
 
 if __name__ == "__main__":
     ntap_user = ""
@@ -77,10 +98,15 @@ if __name__ == "__main__":
     DEBUG = False
     snap_list = []
     pattern = ""
+    admin_lif = ""
     INTERACTIVE = True
+    timeout = 60
+    fileset = ""
+    sla= ""
+    NAS_DA = False
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'hDn:c:t:p:y', ['--help', '--DEBUG', '--creds=', '--ntap_creds=', '--token='
-                                  '--pattern=', '--yes'])
+    optlist, args = getopt.getopt(sys.argv[1:], 'hDn:c:t:p:ya:f:s:d', ['--help', '--DEBUG', '--creds=', '--ntap_creds=', '--token='
+                                  '--pattern=', '--yes', '--admin=', '--sla=', '--nas_da'])
     for opt, a in optlist:
         if opt in ('-h', '--help'):
             usage()
@@ -96,9 +122,15 @@ if __name__ == "__main__":
             pattern = a
         if opt in ('-y', '--yes'):
             INTERACTIVE = False
+        if opt in ('-a', '--admin'):
+            admin_lif = a
+        if opt in ('-s', '--sla'):
+            sla = a
+        if opt in ('d', '--nas_da'):
+            NAS_DA = True
 
     try:
-        (ntap_host, rubrik_host, svm, volume, outfile) = args
+        (ntap_host, rubrik_host, volume, share, outfile) = args
     except:
         usage()
     if not ntap_user:
@@ -121,7 +153,9 @@ if __name__ == "__main__":
     else:
         ssl._create_default_https_context = _create_unverified_https_context
 
-    netapp = NaServer(ntap_host, 1, 130)
+    if not admin_lif:
+        admin_lif = ntap_host
+    netapp = NaServer(admin_lif, 1, 130)
     out = netapp.set_transport_type('HTTPS')
     ntap_set_err_check(out)
     out = netapp.set_style('LOGIN')
@@ -134,24 +168,12 @@ if __name__ == "__main__":
     ntap_timezone = result.child_get_string('timezone')
     dprint("NTAP_TZ = " + ntap_timezone)
     filer_tz = pytz.timezone(ntap_timezone)
-    api = NaElement('snapshot-get-iter')
-    xi = NaElement('desired-attributes')
-    api.child_add(xi)
-    xi1 = NaElement('snapshot-info')
-    xi.child_add(xi1)
-    xi1.child_add_string('name', '<name>')
-    xi1.child_add_string('access-time', '<access-time>')
-    xi2 = NaElement('query')
-    api.child_add(xi2)
-    xi3 = NaElement('snapshot-info')
-    xi2.child_add(xi3)
-    xi3.child_add_string('vserver', svm)
-    xi3.child_add_string('volume', volume)
-    api.child_add_string("max-records", 1024)
+    api = NaElement('snapshot-list-info')
+    api.child_add_string("volume", volume)
     result = netapp.invoke_elem(api)
     ntap_invoke_err_check(result)
     dprint(result.sprintf())
-    snaps = result.child_get('attributes-list').children_get()
+    snaps = result.child_get('snapshots').children_get()
     for s in snaps:
         name = s.child_get_string('name')
         time = s.child_get_string('access-time')
@@ -170,3 +192,72 @@ if __name__ == "__main__":
     index_list_s = python_input("Select snapshots to backup: ")
     index_list = get_index_list(index_list_s, snap_list)
     dprint("INDEX_LIST = " + str(index_list))
+    hs_data = rubrik.get('internal', '/host/share', timeout=timeout)
+    hs_id = ""
+    for hs in hs_data['data']:
+        if hs['hostname'] == ntap_host and hs['exportPoint'] == share:
+            hs_id = str(hs['id'])
+            break
+    if not hs_id:
+        sys.stderr.write("Can't find share: " + ntap_host + ':' + share + '\n')
+        exit(1)
+    dprint("HS_ID: " + hs_id)
+    if share.startswith('/'):
+        fst_ck = share[1:]
+        protocol = "NFS"
+    else:
+        fs_ck = share
+        protocol = "SMB"
+    fs_data = rubrik.get('v1', '/fileset?share_id=' + hs_id, timeout=timeout)
+    if fs_data['total'] == 0:
+        fst_data = rubrik.get('v1', '/fileset_template?name=' + ntap_host + '_' + fst_ck + '&share_type=' + protocol,
+                              timeout=timeout)
+        if fst_data['total'] == 0:
+            print("No fileset found...creating template" + ntap_host + '_' + fst_ck)
+            fst_id = create_fs_template(rubrik, ntap_host, share)
+        else:
+            fst_id = str(fst_data['data'][0]['id'])
+        print('Adding fileset template ' + ntap_host + '_' + share + ' to share')
+        payload = {'shareId': hs_id, 'templateId': fst_id, 'isPassthrough': NAS_DA}
+        fst_add = rubrik.post('v1', '/fileset', payload, timeout=timeout)
+        fs_id = str(fst_add['id'])
+    else:
+        valid = False
+        while not valid:
+            print('Found multiple filesets on the share.  Choose an existing or create a new one:\n')
+            for i, f in enumerate(fs_data['data']):
+                print(str(i) + ': ' + f['name'] + '  [' + f['configuredSlaDomainName'] + ']')
+            print('\nN: Create a new fileset\n')
+            fs_index = python_input("Selection: ")
+            if fs_index == "N" or fs_index == "n":
+                fst_data = rubrik.get('v1','/fileset_template?name=' + ntap_host + '_' + fst_ck + '&share_type=' + protocol,
+                                      timeout=timeout)
+                if fst_data['total'] == 0:
+                    fst_id = create_fs_template(rubrik, ntap_host, share)
+                else:
+                    fst_id = fst_data['data'][0]['id']
+                print('Adding fileset template ' + ntap_host + '_' + share + ' to share')
+                payload = {'shareId': hs_id, 'templateId': fst_id, 'isPassthrough': NAS_DA}
+                fst_add = rubrik.post('v1', '/fileset', payload, timeout=timeout)
+                fs_id = str(fst_add['id'])
+                valid = True
+            elif int(fs_index) in range(0, len(fs_data['data'])):
+                fs_id = str(fs_data['data'][int(fs_index)]['id'])
+                valid = True
+    dprint("FS_ID: " + fs_id)
+    if sla:
+        sla_data = rubrik.get('v2', '/sla_domain?name=' + sla, timeout=timeout)
+        if sla_data['total'] == 0:
+            sys.stderr.write('SLA Domain ' + sla + ' not found.\n')
+            exit(2)
+        elif sla_data['total'] != 1:
+            sys.stderr.write("Multiple SLA domains found. The script needs one\n")
+            exit(2)
+        else:
+            sla_id = sla_data['data'][0]['id']
+    else:
+        sla_id = fs_data['data'][int(fs_index)]['configuredSlaDomainId']
+        if sla_id == "UNPROTECTED":
+            sys.stderr.write("Fileset assigned as no SLA.  Use -s to define one.\n")
+            exit(2)
+    dprint("SLA_ID: " + sla_id)
