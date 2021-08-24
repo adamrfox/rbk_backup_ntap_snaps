@@ -17,7 +17,20 @@ import urllib3
 urllib3.disable_warnings()
 
 def usage():
-    print("Usage goes here!")
+    sys.stderr.write('rbk_backup_ntap_snaps.py [-hDd] [-c creds] [-n ntap_creds] [-t token] [-p pattern] [-a admin_lif] [-s sla] ntap rubrik [volume] share log_file\n')
+    sys.stderr.write('-h | --help : Prints this help\n')
+    sys.stderr.write('-D | -- DEBUG : Debug output.  Only useful for troubleshooting.\n')
+    sys.stderr.write('-d | --nas_da : Use NAS DA [default: False]\n')
+    sys.stderr.write('-c | --creds= : Specify Rurbik credentials [user:password]\n')
+    sys.stderr.write('-n | --ntap_creds= : Specify NTAP credentials [user:password]\n')
+    sys.stderr.write('-t | --token= : Specify API token for Rubrik\n')
+    sys.stderr.write('-p | --pattern= : Specify a pattern for NTAP snapshot name\n')
+    sys.stderr.write('-a | --admin= : Specify an SVM admin LIF if needed.\n')
+    sys.stderr.write('-s | --sla= : Specify an SLA.  Use if not using an existing fileset with one assigned.\n')
+    sys.stderr.write('ntap : Name or IP of SVM where the shares exist (must match NAS host name on Rubrik)\n')
+    sys.stderr.write('rubrik : Name or IP of Rubrik cluster\n')
+    sys.stderr.write("volume : Volume name on the NTAP. Only needed if it can't be discoverd from the share name\n")
+    sys.stderr.write('log_file : Name of the log file\n')
     exit(0)
 
 def dprint(message):
