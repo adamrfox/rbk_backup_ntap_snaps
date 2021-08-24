@@ -407,8 +407,9 @@ if __name__ == "__main__":
                     exit(4)
             time.sleep(15)
         fp = open(outfile, "a")
-        fp.write(snap_list[i]['name'] + "," + snap_list[i]['time'] + "," + bu_time + "\n")
+        fp.write(snap_list[int(i)]['name'] + "," + snap_list[int(i)]['time'] + "," + bu_time + "\n")
         fp.close()
+    dprint('UPDATE:' + str(updated_share_properties))
     if protocol == "SMB" and updated_share_properties:
         share_config['properties'].remove('showsnapshot')
         update_share_config(netapp, share_config)
