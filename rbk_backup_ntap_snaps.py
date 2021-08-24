@@ -286,8 +286,8 @@ if __name__ == "__main__":
             exit(1)
     dprint(snap_list)
     print("NTAP Snapshots:\n")
-        for i, s in enumerate(snap_list):
-            print(str(i) + ': ' + s['name'] + '\t\t' + str(s['time']))
+    for i, s in enumerate(snap_list):
+        print(str(i) + ': ' + s['name'] + '\t\t' + str(s['time']))
     index_list_s = python_input("Select snapshots to backup: ")
     index_list = get_index_list(index_list_s, snap_list)
     dprint("INDEX_LIST = " + str(index_list))
@@ -393,7 +393,7 @@ if __name__ == "__main__":
                     exit(4)
             time.sleep(15)
         fp = open(outfile, "a")
-        fp.write(snap_list[i]['time'] + "," + bu_time + "\n")
+        fp.write(snap_list[i]['name'] + "," + snap_list[i]['time'] + "," + bu_time + "\n")
         fp.close()
     if protocol == "SMB" and updated_share_properties:
         share_config['properties'].remove('showsnapshot')
