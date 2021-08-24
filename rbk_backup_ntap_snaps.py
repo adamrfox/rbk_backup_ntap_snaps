@@ -30,6 +30,7 @@ def usage():
     sys.stderr.write('ntap : Name or IP of SVM where the shares exist (must match NAS host name on Rubrik)\n')
     sys.stderr.write('rubrik : Name or IP of Rubrik cluster\n')
     sys.stderr.write("volume : Volume name on the NTAP. Only needed if it can't be discoverd from the share name\n")
+    sys.stderr.write('share : Share name or export path to be backed up\n')
     sys.stderr.write('log_file : Name of the log file\n')
     exit(0)
 
