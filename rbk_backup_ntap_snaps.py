@@ -139,7 +139,7 @@ def discover_volume(netapp, share):
         for v in vols:
             vol_name = v.child_get_string('name')
             vol_path = v.child_get_string('junction-path')
-            dprint("VOL_NAME: " + str(vol_name) + " // VOL_PATH: " + str(vol_path)
+            dprint("VOL_NAME: " + str(vol_name) + " // VOL_PATH: " + str(vol_path))
             if share.startswith(str(vol_path)):
                 return(vol_name)
     else:
