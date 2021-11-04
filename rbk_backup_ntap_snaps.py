@@ -121,7 +121,7 @@ def get_share_config(share_name, xml):
 
 
 def discover_volume(netapp, share):
-    dprint("NTAP: " + netapp + " // SHARE: " + share)
+    dprint("NTAP: " + str(netapp) + " // SHARE: " + str(share))
     if share.startswith('/'):
         api = NaElement('volume-get-iter')
         xi = NaElement('desired-attributes')
