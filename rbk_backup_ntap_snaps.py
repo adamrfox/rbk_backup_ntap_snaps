@@ -121,6 +121,7 @@ def get_share_config(share_name, xml):
 
 
 def discover_volume(netapp, share):
+    dprint("NTAP: " + netapp + " // SHARE: " + share)
     if share.startswith('/'):
         api = NaElement('volume-get-iter')
         xi = NaElement('desired-attributes')
@@ -138,7 +139,8 @@ def discover_volume(netapp, share):
         for v in vols:
             vol_name = v.child_get_string('name')
             vol_path = v.child_get_string('junction-path')
-            if share.startswith(vol_path):
+            dprint("VOL_NAME: " + str(vol_name) + " // VOL_PATH: " + str(vol_path)
+            if share.startswith(str(vol_path)):
                 return(vol_name)
     else:
         api = NaElement('cifs-share-get-iter')
@@ -409,9 +411,9 @@ if __name__ == "__main__":
         fp = open(outfile, "a")
         fp.write(snap_list[int(i)]['name'] + "," + snap_list[int(i)]['time'] + "," + bu_time + "\n")
         fp.close()
-    dprint('UPDATE:' + str(updated_share_properties))
     if protocol == "SMB" and updated_share_properties:
         share_config['properties'].remove('showsnapshot')
+        dprint("NEW SHARE CONFIG: " + str(share_config))
         update_share_config(netapp, share_config)
 
 
