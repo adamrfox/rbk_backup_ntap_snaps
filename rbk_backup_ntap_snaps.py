@@ -377,7 +377,7 @@ if __name__ == "__main__":
             sys.stderr.write("Fileset assigned as no SLA.  Use -s to define one.\n")
             exit(2)
     dprint("SLA_ID: " + sla_id)
-    fp = open(outfile, "w")
+    fp = open(outfile, "a")
     fp.close()
     for i in index_list:
         fs_info = rubrik.get('v1', '/fileset_template/' + fst_id, timeout=timeout)
