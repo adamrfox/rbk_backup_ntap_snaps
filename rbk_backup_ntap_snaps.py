@@ -84,28 +84,6 @@ def get_index_list(s, snap_list):
                 return([])
     return(index_list)
 
-def create_fs_template(rubrik, ntap_host, share):
-    if share.startswith('/'):
-        print("Creating Fileset Template: " + ntap_host + '_' + share[1:])
-        payload = [{"includes": ["x"], "excludes": [], "name": ntap_host + '_' + share[1:], "shareType": "NFS",
-                    "allowBackupHiddenFoldersInNetworkMounts": True}]
-    else:
-        print("Creating Fileset Template: " + ntap_host + '_' + share)
-        payload = [{"includes": ["x"], "excludes": [], "name": ntap_host + '_' + share, "shareType": "SMB"}]
-    fst_data = rubrik.post('internal', '/fileset_template/bulk', payload, timeout=timeout)
-    if fst_data['total'] == 0:
-        sys.stderr.write("Error Creating Fileset Template: " + ntap_host + '_' + share)
-        exit(1)
-    return(str(fst_data['data'][0]['id']))
-
-def get_fsid(id, data):
-    if data['total'] == 0:
-        return("")
-    for fs in data['data']:
-        if fs['templateId'] == id:
-            return(fs['id'])
-    return("")
-
 def get_share_config(share_name, xml):
     share_config = {}
     share_data = xmltodict.parse(xml)
@@ -193,6 +171,122 @@ def check_share_properties(netapp, share):
         share_update = True
     return(share_config, share_update)
 
+def update_share_path(rubrik, id, snap_name):
+    hs_data = rubrik.get('internal', '/host/share/' + id, timeout=timeout)
+    path = hs_data['exportPoint']
+    if '.snapshot/' in path:
+        path_list = path.split('/')
+        for i, pe in enumerate(path_list):
+            if pe == '.snapshot':
+                path_list[i+1] = snap_name
+                break
+        path = '/'.join(path_list)
+    else:
+        path = path + '/.snapshot/' + snap_name
+    return (path)
+
+def update_smb_path(netapp, share, snap_name):
+    share_path = get_share_path(netapp, share)
+    if '.snapshot/' in share_path:
+        path_list = share_path.split('/')
+        for i, pe, in enumerate(path_list):
+            if pe == ".snapshot":
+                path_list[i+1] = snap_name
+                break
+        share_path = '/'.join(path_list)
+    else:
+        share_path = share_path +'/.snapshot/' + snap_name
+    api = NaElement('cifs-share-modify')
+    api.child_add_string('share-name', share)
+    api.child_add_string('path', share_path)
+    result = netapp.invoke_elem(api)
+    ntap_invoke_err_check(result)
+    dprint("SMB path updated to " + share_path)
+    return
+
+def share_exists(netapp, share_name):
+    api = NaElement('cifs-share-get-iter')
+    xi = NaElement('desired-attributes')
+    api.child_add(xi)
+    xi1 = NaElement('cifs-share')
+    xi.child_add(xi1)
+    xi1.child_add_string('share-name', '<share_name>')
+    api.child_add_string('max-records', 5000)
+    result = netapp.invoke_elem(api)
+    ntap_invoke_err_check(result)
+    dprint(result.sprintf())
+    share_list = result.child_get('attributes-list').children_get()
+    for sh in share_list:
+        sh_name = sh.child_get_string('share-name')
+        if sh_name == share_name:
+            return(True)
+    return(False)
+
+def get_share_path(netapp, share_name):
+    sh_path = ""
+    api = NaElement('cifs-share-get-iter')
+    xi = NaElement('desired-attributes')
+    api.child_add(xi)
+    xi1 = NaElement('cifs-share')
+    xi.child_add(xi1)
+    xi1.child_add_string('share-name', '<share_name>')
+    xi1.child_add_string('path', '<path')
+    api.child_add_string('max-records', 5000)
+    result = netapp.invoke_elem(api)
+    ntap_invoke_err_check(result)
+    share_list = result.child_get('attributes-list').children_get()
+    for sh in share_list:
+        sh_name = sh.child_get_string('share-name')
+        if sh_name == share_name:
+            sh_path = sh.child_get_string('path')
+            break
+    return(sh_path)
+
+def temp_share(cmd, netapp, share, domain, user):
+    if cmd == "create":
+        if not share_exists(netapp, share + '_temp$'):
+            share_path = get_share_path(netapp, share)
+            api = NaElement('cifs-share-create')
+            api.child_add_string('path', share_path)
+            api.child_add_string('share-name', share + '_temp$')
+            xi = NaElement('share-properties')
+            api.child_add(xi)
+            xi.child_add_string('cifs-share-properties', 'showsnapshot')
+            xi.child_add_string('cifs-share-properties', 'oplocks')
+            xi.child_add_string('cifs-share-properties', 'changenotify')
+            result = netapp.invoke_elem(api)
+            ntap_invoke_err_check(result)
+            api = NaElement('cifs-share-access-control-delete')
+            api.child_add_string('share', share + '_temp$')
+            api.child_add_string('user-group-type', 'windows')
+            api.child_add_string('user-or-group', 'Everyone')
+            result = netapp.invoke_elem(api)
+            ntap_invoke_err_check(result)
+            smb_user = domain + '\\' + user
+            api = NaElement('cifs-share-access-control-create')
+            api.child_add_string('permission', 'full_control')
+            api.child_add_string('share', share + '_temp$')
+            api.child_add_string('user-group-type', 'windows')
+            api.child_add_string('user-or-group', smb_user)
+            result = netapp.invoke_elem(api)
+            ntap_invoke_err_check(result)
+            dprint("Share added")
+        else:
+            dprint("Share already exists")
+    elif cmd == "delete":
+        api = NaElement('cifs-share-delete')
+        api.child_add_string('share-name', share + '_temp$')
+        result = netapp.invoke_elem(api)
+        ntap_invoke_err_check(result)
+        dprint("Share deleted")
+    elif cmd == "update":
+        api = NaElement('cifs-share-modify')
+        api.child_add_string('share', share + '_temp$')
+        api.child_add_string('path', domain)    # overloading the domain variable for the path.
+        result = netapp.invoke_elem(api)
+        ntap_invoke_err_check(result)
+        dprint("Updated share path to " + domain)
+    return
 
 if __name__ == "__main__":
     ntap_user = ""
@@ -312,54 +406,46 @@ if __name__ == "__main__":
     for hs in hs_data['data']:
         if hs['hostname'] == ntap_host and hs['exportPoint'] == share:
             hs_id = str(hs['id'])
+            hs_path_save = str(hs['exportPoint'])
+            rbk_host_id = str(hs['hostId'])
             break
     if not hs_id:
         sys.stderr.write("Can't find share: " + ntap_host + ':' + share + '\n')
         exit(1)
     dprint("HS_ID: " + hs_id)
     if share.startswith('/'):
-        fst_ck = share[1:]
         protocol = "NFS"
     else:
-        fst_ck = share
         protocol = "SMB"
+        host_creds = rubrik.get('internal', '/host/share_credential?host_id=' + rbk_host_id, timeout=timeout)
+        smb_user = host_creds['data'][0]['username']
+        try:
+            smb_domain = host_creds['data'][0]['domain']
+        except:
+            smb_domain = "BUILTIN"
+        temp_share('create', netapp, share, smb_domain, smb_user)
+        payload = {'exportPoint': share + '_temp$'}
+        sh_update = rubrik.patch('internal', '/host/share/' + hs_id, payload, timeout=timeout)
     fs_data = rubrik.get('v1', '/fileset?share_id=' + hs_id, timeout=timeout)
     if fs_data['total'] == 0:
-        fst_data = rubrik.get('v1', '/fileset_template?name=' + ntap_host + '_' + fst_ck + '&share_type=' + protocol,
-                              timeout=timeout)
-        if fst_data['total'] == 0:
-            print("No fileset found...creating template" + ntap_host + '_' + fst_ck)
-            fst_id = create_fs_template(rubrik, ntap_host, share)
-        else:
-            fst_id = str(fst_data['data'][0]['id'])
-        print('Adding fileset template ' + ntap_host + '_' + share + ' to share')
-        payload = {'shareId': hs_id, 'templateId': fst_id, 'isPassthrough': NAS_DA}
-        fst_add = rubrik.post('v1', '/fileset', payload, timeout=timeout)
-        fs_id = str(fst_add['id'])
+        sys.stderr.write("No Fileset Found on share.\n")
+        exit(5)
+    elif fs_data['total'] == 1:
+        print('\nFound fileset: ' + fs_data['data'][0]['name'] + '  [' + fs_data['data'][0]['configuredSlaDomainName'] + ']')
+        use = python_input("Use this fileset [y/n]: ")
+        if use[0].lower() != "y":
+            exit(1)
+        fs_id = str(fs_data['data'][0]['id'])
     else:
         valid = False
         while not valid:
             print('Found multiple filesets on the share.  Choose an existing or create a new one:\n')
             for i, f in enumerate(fs_data['data']):
                 print(str(i) + ': ' + f['name'] + '  [' + f['configuredSlaDomainName'] + ']')
-            print('\nN: Create a new fileset\n')
-            fs_index = python_input("Selection: ")
-            if fs_index == "N" or fs_index == "n":
-                fst_data = rubrik.get('v1','/fileset_template?name=' + ntap_host + '_' + fst_ck + '&share_type=' + protocol,
-                                      timeout=timeout)
-                if fst_data['total'] == 0:
-                    fst_id = create_fs_template(rubrik, ntap_host, share)
-                else:
-                    fst_id = fst_data['data'][0]['id']
-                print('Adding fileset template ' + ntap_host + '_' + share + ' to share')
-                payload = {'shareId': hs_id, 'templateId': fst_id, 'isPassthrough': NAS_DA}
-                fst_add = rubrik.post('v1', '/fileset', payload, timeout=timeout)
-                fs_id = str(fst_add['id'])
-                valid = True
-            elif int(fs_index) in range(0, len(fs_data['data'])):
-                fs_id = str(fs_data['data'][int(fs_index)]['id'])
-                fst_id = str(fs_data['data'][int(fs_index)]['templateId'])
-                valid = True
+                fs_index = python_input("Selection: ")
+                if int(fs_index) in range(0, len(fs_data['data'])):
+                    fs_id = str(fs_data['data'][int(fs_index)]['id'])
+                    valid = True
     dprint("FS_ID: " + fs_id)
     if sla:
         sla_data = rubrik.get('v2', '/sla_domain?name=' + sla, timeout=timeout)
@@ -374,19 +460,18 @@ if __name__ == "__main__":
     else:
         sla_id = fs_data['data'][int(fs_index)]['configuredSlaDomainId']
         if sla_id == "UNPROTECTED":
-            sys.stderr.write("Fileset assigned as no SLA.  Use -s to define one.\n")
+            sys.stderr.write("Fileset assigned as no SLA.  Use -s to define one.\n") # ALLOW USER TO ADD ONE HERE INSTEAD
             exit(2)
     dprint("SLA_ID: " + sla_id)
     fp = open(outfile, "a")
     fp.close()
     for i in index_list:
-        fs_info = rubrik.get('v1', '/fileset_template/' + fst_id, timeout=timeout)
         if protocol == "NFS":
-            fs_info['includes'] = ['/.snapshot/' + snap_list[int(i)]['name'] + '/**']
+            new_path = update_share_path(rubrik, hs_id, snap_list[int(i)]['name'])
+            payload = {'exportPoint': new_path}
+            rubrik.patch('internal', '/host/share/' + hs_id, payload, timeout=timeout)
         else:
-            fs_info['includes'] = ['~snapshot\\' + snap_list[int(i)]['name'] + '\\**']
-        dprint("INCL:" + str(fs_info['includes']))
-        fst_patch = rubrik.patch('v1', '/fileset_template/' + fst_id, fs_info, timeout=timeout)
+            update_smb_path(netapp, share + '_temp$', snap_list[int(i)]['name'])
         print("Backing up NTAP snapshot: " + snap_list[int(i)]['name'])
         bu_config = {'slaId': sla_id, 'isPassthrough': NAS_DA}
         dprint("BU_CONFIG: " + str(bu_config))
@@ -411,10 +496,14 @@ if __name__ == "__main__":
         fp = open(outfile, "a")
         fp.write(snap_list[int(i)]['name'] + "," + snap_list[int(i)]['time'] + "," + bu_time + "\n")
         fp.close()
-    if protocol == "SMB" and updated_share_properties:
-        share_config['properties'].remove('showsnapshot')
-        dprint("NEW SHARE CONFIG: " + str(share_config))
-        update_share_config(netapp, share_config)
+    if protocol == "NFS":
+        payload = {'exportPoint': hs_path_save}
+        rubrik.patch('internal', '/host/share/' + hs_id, payload, timeout=timeout)
+    else:
+        payload = {'exportPoint': share}
+        sh_update = rubrik.patch('internal', '/host/share/' + hs_id, payload, timeout=timeout)
+        temp_share('delete', netapp, share, '', '')
+
 
 
 
