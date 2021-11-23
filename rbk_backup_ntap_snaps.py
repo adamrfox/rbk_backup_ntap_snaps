@@ -150,27 +150,6 @@ def update_share_config(netapp, share_config):
     ntap_invoke_err_check(result)
     return(share_config)
 
-def check_share_properties(netapp, share):
-    share_update = False
-    share_config = {}
-    api = NaElement('cifs-share-get-iter')
-    xi = NaElement('desired-attributes')
-    api.child_add(xi)
-    xi1 = NaElement('cifs-share')
-    xi.child_add(xi1)
-    xi1.child_add_string('share-name', '<share-name>')
-    xi2 = NaElement('share-properties')
-    xi1.child_add(xi2)
-    xi2.child_add_string('cifs-share-properties', '<cifs-share-properties>')
-    result = netapp.invoke_elem(api)
-    ntap_invoke_err_check(result)
-    share_config = get_share_config(share, result.sprintf())
-    if not 'showsnapshot' in share_config['properties']:
-        share_config['properties'].append('showsnapshot')
-        share_config = update_share_config(netapp, share_config)
-        share_update = True
-    return(share_config, share_update)
-
 def update_share_path(rubrik, id, snap_name):
     hs_data = rubrik.get('internal', '/host/share/' + id, timeout=timeout)
     path = hs_data['exportPoint']
@@ -376,8 +355,6 @@ if __name__ == "__main__":
     filer_tz = pytz.timezone(ntap_timezone)
     if not volume:
         volume = discover_volume(netapp, share)
-    if not share.startswith('/'):
-        (share_config, updated_share_properties) = check_share_properties(netapp, share)
     api = NaElement('snapshot-list-info')
     api.child_add_string("volume", volume)
     result = netapp.invoke_elem(api)
