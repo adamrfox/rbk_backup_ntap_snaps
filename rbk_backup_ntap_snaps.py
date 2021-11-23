@@ -381,9 +381,9 @@ if __name__ == "__main__":
     hs_data = rubrik.get('internal', '/host/share', timeout=timeout)
     hs_id = ""
     for hs in hs_data['data']:
-        if hs['hostname'] == ntap_host and hs['exportPoint'] == share:
+        if hs['hostname'] == ntap_host and (hs['exportPoint'] == share or hs['exportPoint'] == share + '_temp$'):
             hs_id = str(hs['id'])
-            hs_path_save = str(hs['exportPoint'])
+            hs_path_save = share
             rbk_host_id = str(hs['hostId'])
             break
     if not hs_id:
@@ -413,16 +413,17 @@ if __name__ == "__main__":
         if use[0].lower() != "y":
             exit(1)
         fs_id = str(fs_data['data'][0]['id'])
+        fs_index = 0
     else:
         valid = False
         while not valid:
-            print('Found multiple filesets on the share.  Choose an existing or create a new one:\n')
+            print('Found multiple filesets on the share.  Choose from the list of filesets:\n')
             for i, f in enumerate(fs_data['data']):
                 print(str(i) + ': ' + f['name'] + '  [' + f['configuredSlaDomainName'] + ']')
-                fs_index = python_input("Selection: ")
-                if int(fs_index) in range(0, len(fs_data['data'])):
-                    fs_id = str(fs_data['data'][int(fs_index)]['id'])
-                    valid = True
+            fs_index = python_input("Selection: ")
+            if int(fs_index) in range(0, len(fs_data['data'])):
+                fs_id = str(fs_data['data'][int(fs_index)]['id'])
+                valid = True
     dprint("FS_ID: " + fs_id)
     if sla:
         sla_data = rubrik.get('v2', '/sla_domain?name=' + sla, timeout=timeout)
@@ -437,8 +438,16 @@ if __name__ == "__main__":
     else:
         sla_id = fs_data['data'][int(fs_index)]['configuredSlaDomainId']
         if sla_id == "UNPROTECTED":
-            sys.stderr.write("Fileset assigned as no SLA.  Use -s to define one.\n") # ALLOW USER TO ADD ONE HERE INSTEAD
-            exit(2)
+            sla_data = rubrik.get('v2', '/sla_domain?primary_cluster_id=local', timeout=timeout)
+            valid = False
+            while not valid:
+                print("No SLA available for backups.  Select from the following:")
+                for i, s in enumerate(sla_data['data']):
+                    print(str(i) + ': ' + s['name'])
+                sla_index = python_input("Selection: ")
+                if int(sla_index) in range(0, len(sla_data['data'])):
+                    sla_id = str(sla_data['data'][int(sla_index)]['id'])
+                    valid = True
     dprint("SLA_ID: " + sla_id)
     fp = open(outfile, "a")
     fp.close()
